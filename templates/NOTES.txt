@@ -1,0 +1,11 @@
+Thanks for installing {{ .Chart.Name }}.
+
+This release exposes a Service named "ui" on port {{ .Values.service.port }}.
+
+Routing:
+- An HTTPRoute should already point your hostname to this service.
+- Namespace: {{ .Release.Namespace }}
+- Service: ui:{{ .Values.service.port }}
+
+Verify rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "jellycat-ui.fullname" . }}

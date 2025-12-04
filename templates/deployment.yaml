@@ -1,0 +1,267 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "jellycat-ui.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "jellycat-ui.name" . }}
+    helm.sh/chart: {{ include "jellycat-ui.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "jellycat-ui.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "jellycat-ui.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        reloader.stakater.com/auto: "true"
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ include "jellycat-ui.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ui
+          image: "{{ .Values.image.repository }}:{{ default .Values.image.tag .Values.image.tagOverride }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: http
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "{{ .Values.service.port }}"
+            {{- if .Values.auth.enabled }}
+            - name: AUTHENTIK_URL
+              value: {{ .Values.auth.baseURL | quote }}
+            - name: AUTHENTIK_ISSUER
+              value: {{ .Values.auth.issuerURL | quote }}
+            - name: AUTHENTIK_CLIENT_ID
+              value: {{ .Values.auth.clientID | quote }}
+            {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
+            - name: AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.auth.vault.keys.clientSecret }}
+            {{- else if .Values.auth.existingSecret }}
+            - name: AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret }}
+                  key: clientSecret
+            {{- else if .Values.auth.clientSecret }}
+            - name: AUTHENTIK_CLIENT_SECRET
+              value: {{ .Values.auth.clientSecret | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if and .Values.auth.enabled (eq .Values.auth.mode "nextauth") .Values.auth.nextAuth.enabled }}
+            - name: NEXTAUTH_URL
+              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ternary .Values.auth.vault.secretName .Values.auth.existingSecret (.Values.auth.vault.enabled) }}
+                  key: {{ ternary .Values.auth.vault.keys.nextAuthSecret "NEXTAUTH_SECRET" (.Values.auth.vault.enabled) }}
+            # Auth.js v5 envs (compat with proxies)
+            - name: AUTH_URL
+              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            # Better Auth explicit URL to avoid relying on HOSTNAME/headers
+            - name: BETTER_AUTH_URL
+              value: {{ default .Values.auth.nextAuth.publicURL .Values.auth.betterAuth.url | quote }}
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ternary .Values.auth.vault.secretName .Values.auth.existingSecret (.Values.auth.vault.enabled) }}
+                  key: {{ ternary .Values.auth.vault.keys.nextAuthSecret "NEXTAUTH_SECRET" (.Values.auth.vault.enabled) }}
+            # Better Auth secret (reuse NEXTAUTH_SECRET key by default)
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ternary .Values.auth.vault.secretName .Values.auth.existingSecret (.Values.auth.vault.enabled) }}
+                  key: {{ default .Values.auth.vault.keys.nextAuthSecret (default "NEXTAUTH_SECRET" .Values.auth.betterAuth.secretKey) }}
+            - name: AUTH_TRUST_HOST
+              value: "true"
+            - name: NEXTAUTH_TRUST_HOST
+              value: "true"
+            # Common app-level base URL envs
+            - name: NEXT_PUBLIC_APP_URL
+              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            - name: PUBLIC_BASE_URL
+              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            - name: APP_URL
+              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            - name: BASE_URL
+              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            - name: AUTH_ADMIN_CLAIM
+              value: {{ .Values.auth.adminClaim | quote }}
+            - name: AUTH_ADMIN_VALUE
+              value: {{ .Values.auth.adminValue | quote }}
+            {{- end }}
+            # Database configuration
+            {{- if .Values.db.driver }}
+            - name: DB_DRIVER
+              value: {{ .Values.db.driver | quote }}
+            {{- end }}
+            {{- if or .Values.db.postgres.value (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            - name: DATABASE_URL
+              {{- if .Values.db.postgres.value }}
+              value: {{ .Values.db.postgres.value | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.db.postgres.secretKey }}
+              {{- end }}
+            {{- end }}
+            {{- if or .Values.db.clickhouse.url (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            - name: CLICKHOUSE_URL
+              {{- if .Values.db.clickhouse.url }}
+              value: {{ .Values.db.clickhouse.url | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.db.clickhouse.urlSecretKey }}
+              {{- end }}
+            {{- end }}
+            {{- if .Values.db.clickhouse.database }}
+            - name: CLICKHOUSE_DATABASE
+              value: {{ .Values.db.clickhouse.database | quote }}
+            {{- end }}
+            {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
+            - name: CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.db.clickhouse.userSecretKey }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.db.clickhouse.passwordSecretKey }}
+            {{- end }}
+            {{- if .Values.db.clickhouse.pointsTable }}
+            - name: CLICKHOUSE_POINTS_TABLE
+              value: {{ .Values.db.clickhouse.pointsTable | quote }}
+            {{- end }}
+            {{- if .Values.db.clickhouse.pointsQuery }}
+            - name: CLICKHOUSE_POINTS_QUERY
+              value: {{ .Values.db.clickhouse.pointsQuery | quote }}
+            {{- end }}
+            # NATS configuration
+            {{- if .Values.nats.enabled }}
+            {{- if or .Values.nats.url (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            - name: NATS_URL
+              {{- if .Values.nats.url }}
+              value: {{ .Values.nats.url | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.nats.urlSecretKey }}
+              {{- end }}
+            {{- end }}
+            {{- if or .Values.nats.wsUrl (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            - name: NATS_WS_URL
+              {{- if .Values.nats.wsUrl }}
+              value: {{ .Values.nats.wsUrl | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.nats.wsUrlSecretKey }}
+              {{- end }}
+            {{- end }}
+            {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
+            - name: NATS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.nats.usernameSecretKey }}
+            - name: NATS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.nats.passwordSecretKey }}
+            - name: NATS_CREDS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.vault.secretName }}
+                  key: {{ .Values.nats.credsSecretKey }}
+            {{- end }}
+            {{- end }}
+          {{- with .Values.extraEnv }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healthPath }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthPath }}
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if or .Values.auth.caSecretName (and .Values.auth.vault.enabled .Values.auth.vault.secretProviderClassName) }}
+          volumeMounts:
+            {{- if .Values.auth.caSecretName }}
+            - name: auth-ca
+              mountPath: /etc/ssl/certs
+            {{- end }}
+            {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretProviderClassName }}
+            - name: vault-secrets
+              mountPath: /vault/secrets
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.auth.caSecretName (and .Values.auth.vault.enabled .Values.auth.vault.secretProviderClassName) }}
+      volumes:
+        {{- if .Values.auth.caSecretName }}
+        - name: auth-ca
+          secret:
+            secretName: {{ .Values.auth.caSecretName }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretProviderClassName }}
+        - name: vault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Values.auth.vault.secretProviderClassName }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

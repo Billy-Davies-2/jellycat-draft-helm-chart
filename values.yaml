@@ -1,0 +1,120 @@
+replicaCount: 1
+
+image:
+  # Default image for the Jellycat Draft UI
+  repository: ghcr.io/billy-davies-2/jellycat-draft-ui
+  tag: latest
+  pullPolicy: IfNotPresent
+  # Optional: override tag without changing values.yaml (e.g. for CI/CD)
+  tagOverride: ""
+
+imagePullSecrets: [] # e.g., [{ name: ghcr-creds }]
+
+service:
+  type: ClusterIP
+  port: 3000
+  annotations: {}
+
+healthPath: /api/health
+
+# Use envFrom sources (ConfigMap/Secret) via values like:
+# extraEnv:
+#   - secretRef:
+#       name: my-secret
+extraEnv: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""
+
+auth:
+  enabled: false
+  # Authentik endpoints
+  baseURL: ""   # e.g., https://auth.example.com
+  issuerURL: "" # e.g., https://auth.example.com/application/o/jellycat/
+  clientID: ""
+  # Mount a CA bundle for self-signed Authentik
+  caSecretName: "" # secret with key ca.crt to trust Authentik's CA
+
+  # Vault CSI (recommended)
+  vault:
+    enabled: false
+    secretProviderClassName: ""
+    secretName: "" # k8s Secret name synced by SPC
+    keys:
+      clientSecret: clientSecret
+      nextAuthSecret: NEXTAUTH_SECRET
+
+  # NextAuth configuration
+  nextAuth:
+    enabled: false
+    publicURL: "" # External URL of your app
+    secret: ""    # NEXTAUTH_SECRET (if not using Vault sync)
+
+  # Better Auth (v2) configuration (optional)
+  # If not specified, the chart will reuse nextAuth.publicURL and nextAuth secret.
+  betterAuth:
+    url: ""
+    secretKey: ""  # override to use a different secret key name in Secret; default uses NEXTAUTH_SECRET
+
+  # Authorization via configurable claim/value (e.g., groups includes homelab-admins)
+  adminClaim: ""
+  adminValue: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Database configuration
+db:
+  driver: "" # e.g., postgres | clickhouse
+  postgres:
+    # Prefer reading from Vault-synced Secret
+    secretKey: DATABASE_URL
+    # Optional direct value (discouraged in prod)
+    value: ""
+  clickhouse:
+    # Prefer a single URL in secret (e.g., http://user:pass@clickhouse:8123?database=db)
+    urlSecretKey: CLICKHOUSE_URL
+    url: ""
+    # Or provide pieces:
+    database: ""
+    userSecretKey: CLICKHOUSE_USER
+    passwordSecretKey: CLICKHOUSE_PASSWORD
+    # Optional table/query overrides
+    pointsTable: ""
+    pointsQuery: ""
+
+# NATS configuration (server-side + optional browser WS URL)
+nats:
+  enabled: false
+  # Direct values (ok for dev); in prod prefer Vault-synced Secret referenced by auth.vault.secretName
+  url: ""           # e.g., nats://nats.nats.svc:4222
+  wsUrl: ""         # e.g., wss://nats.example.com (if exposing NATS WebSocket externally)
+  # Keys to read from the Vault-synced Secret (ui-auth-secrets)
+  urlSecretKey: NATS_URL
+  wsUrlSecretKey: NATS_WS_URL
+  usernameSecretKey: NATS_USERNAME
+  passwordSecretKey: NATS_PASSWORD
+  credsSecretKey: NATS_CREDS
+
+# Optional NetworkPolicy (disabled by default)
+networkPolicy:
+  enabled: false
+  # When enabled, allow egress to NATS service (namespace/name) on standard ports
+  natsNamespace: nats
+  natsServiceName: nats
+  ports:
+    - 4222
