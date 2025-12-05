@@ -15,6 +15,35 @@ service:
   port: 3000
   annotations: {}
 
+# Ingress (use OR HTTPRoute)
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ""
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: [] # e.g., [{ hosts: [example.com], secretName: jellycat-ui-tls }]
+
+# HTTPRoute (Gateway API). Do not enable with Ingress.
+httpRoute:
+  enabled: false
+  # Reference to an existing Gateway
+  gateway:
+    name: ""
+    namespace: ""
+  parentRefs: [] # advanced: override parentRefs directly
+  hostnames: []  # e.g., ["ui.example.com"]
+  annotations: {}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters: []
+
 healthPath: /api/health
 
 # Use envFrom sources (ConfigMap/Secret) via values like:
@@ -53,6 +82,10 @@ auth:
     enabled: false
     secretProviderClassName: ""
     secretName: "" # k8s Secret name synced by SPC
+    # Optional: provide raw SecretProviderClass spec to render this chart's SPC
+    # If set, the chart will create a SecretProviderClass named above.
+    # Example structure depends on provider (Vault/Azure/GCP). Keep generic.
+    spec: {}
     keys:
       clientSecret: clientSecret
       nextAuthSecret: NEXTAUTH_SECRET
@@ -118,3 +151,52 @@ networkPolicy:
   natsServiceName: nats
   ports:
     - 4222
+
+# ExternalSecrets integration (external-secrets.io)
+externalSecrets:
+  enabled: false
+
+# ServiceMonitor (Prometheus Operator) optional
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+  namespace: ""
+  # Metrics endpoint details
+  portName: http
+  path: /api/metrics
+  scheme: http
+  # Name of the ExternalSecret resource; defaults to release fullname when empty
+  name: ""
+  # Name of the Secret to be created by ExternalSecrets; defaults to auth.vault.secretName when empty
+  secretName: ""
+  # Reference to the ClusterSecretStore/SecretStore
+  secretStoreRef:
+    name: ""          # required when externalSecrets.enabled=true
+    kind: ClusterSecretStore
+  # Refresh interval for pulling secrets
+  refreshInterval: 1h
+  # Where in the provider the secrets live (e.g. Vault path, AWS SecretsManager key)
+  remoteRef:
+    # Base path/prefix; individual keys are appended to this
+    # Example for Vault: "secret/data/jellycat/ui"
+    basePath: ""
+  # Map of logical keys to external provider properties
+  # These default to the existing keys used in the Deployment env vars.
+  data:
+    # Auth / NextAuth / Better Auth
+    clientSecretKey: clientSecret
+    nextAuthSecretKey: NEXTAUTH_SECRET
+    # Database
+    databaseUrlKey: DATABASE_URL
+    # ClickHouse
+    clickhouseUrlKey: CLICKHOUSE_URL
+    clickhouseUserKey: CLICKHOUSE_USER
+    clickhousePasswordKey: CLICKHOUSE_PASSWORD
+    # NATS
+    natsUrlKey: NATS_URL
+    natsWsUrlKey: NATS_WS_URL
+    natsUsernameKey: NATS_USERNAME
+    natsPasswordKey: NATS_PASSWORD
+    natsCredsKey: NATS_CREDS

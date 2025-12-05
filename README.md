@@ -141,6 +141,126 @@ This chart exposes flexible configuration for:
 
 These are wired through environment variables in the `Deployment` template and can be sourced from Vault-synced Secrets (via CSI) or explicit values. See `values.yaml` for detailed examples and comments.
 
+### Secrets: choose ExternalSecrets OR SecretProviderClass
+
+You can wire secrets using one of two patterns. Do not enable both at the same time — the chart will fail the render if it detects both are enabled.
+
+- ExternalSecrets (external-secrets.io):
+  - Enable `externalSecrets.enabled=true`
+  - Point `externalSecrets.secretStoreRef` and `externalSecrets.remoteRef.basePath`
+  - Optionally set `externalSecrets.secretName` (defaults to `auth.vault.secretName` or `<release>-jellycat-ui-auth`).
+  - The `Deployment` reads envs from this Secret using the configured keys.
+
+- SecretProviderClass (CSI driver):
+  - Enable `auth.vault.enabled=true`
+  - Provide `auth.vault.secretProviderClassName` (name of the SPC)
+  - Optionally set `auth.vault.secretName` (name of the synced Kubernetes Secret if your SPC defines `secretObjects`)
+  - Provide the raw SPC spec under `auth.vault.spec` (provider-specific). The chart renders a `SecretProviderClass` resource using this spec and mounts it at `/vault/secrets` when enabled.
+
+Example ExternalSecrets values:
+
+```yaml
+externalSecrets:
+  enabled: true
+  secretStoreRef:
+    name: my-cluster-store
+    kind: ClusterSecretStore
+  remoteRef:
+    basePath: secret/data/jellycat/ui
+  secretName: ui-auth-secrets
+```
+
+Example SecretProviderClass values (Vault provider — spec is provider-specific):
+
+```yaml
+auth:
+  vault:
+    enabled: true
+    secretProviderClassName: ui-auth-spc
+    secretName: ui-auth-secrets
+    spec:
+      provider: vault
+      parameters:
+        vaultAddress: https://vault.example.com
+        roleName: jellycat-ui
+        objects: |
+          - objectName: clientSecret
+            secretPath: secret/data/jellycat/ui
+            secretKey: clientSecret
+          - objectName: NEXTAUTH_SECRET
+            secretPath: secret/data/jellycat/ui
+            secretKey: NEXTAUTH_SECRET
+      secretObjects:
+        - secretName: ui-auth-secrets
+          type: Opaque
+          data:
+            - key: clientSecret
+              objectName: clientSecret
+            - key: NEXTAUTH_SECRET
+              objectName: NEXTAUTH_SECRET
+```
+
+### Routing: Ingress or HTTPRoute
+
+Choose one routing method:
+
+- Ingress:
+  - Enable with `ingress.enabled=true`
+  - Configure `ingress.className`, `ingress.annotations`, `ingress.hosts[]`, and `ingress.tls[]`
+
+- HTTPRoute (Gateway API):
+  - Enable with `httpRoute.enabled=true`
+  - Reference a `Gateway` via `httpRoute.gateway.{name,namespace}` or provide `parentRefs`
+  - Configure `httpRoute.hostnames[]` and `httpRoute.rules[]`
+
+Example (Ingress):
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: ui.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts: [ui.example.com]
+      secretName: jellycat-ui-tls
+```
+
+Example (HTTPRoute):
+
+```yaml
+httpRoute:
+  enabled: true
+  gateway:
+    name: public-gateway
+    namespace: gateway-system
+  hostnames:
+    - ui.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+```
+
+### Metrics: ServiceMonitor
+
+If using Prometheus Operator, enable a ServiceMonitor to scrape the UI metrics endpoint:
+
+```yaml
+serviceMonitor:
+  enabled: true
+  labels:
+    release: prometheus
+  interval: 30s
+  scrapeTimeout: 10s
+  portName: http
+  path: /api/metrics
+```
+
 ---
 
 ## Example: Minimal Auth-Disabled Deployment

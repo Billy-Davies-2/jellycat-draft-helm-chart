@@ -1,0 +1,50 @@
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.ingress.enabled }}
+{{- fail "Cannot enable both httpRoute and ingress. Please choose one." }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "jellycat-ui.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "jellycat-ui.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ include "jellycat-ui.chart" . }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.httpRoute.parentRefs }}
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  {{- else if and .Values.httpRoute.gateway.name .Values.httpRoute.gateway.namespace }}
+  parentRefs:
+    - name: {{ .Values.httpRoute.gateway.name }}
+      namespace: {{ .Values.httpRoute.gateway.namespace }}
+  {{- else if .Values.httpRoute.gateway.name }}
+  parentRefs:
+    - name: {{ .Values.httpRoute.gateway.name }}
+  {{- end }}
+  {{- with .Values.httpRoute.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.httpRoute.rules }}
+    - matches:
+        {{- range .matches }}
+        - path:
+            type: {{ .path.type | default "PathPrefix" }}
+            value: {{ .path.value | default "/" | quote }}
+        {{- end }}
+      {{- with .filters }}
+      filters:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      backendRefs:
+        - name: {{ include "jellycat-ui.fullname" $ }}
+          port: {{ $.Values.service.port }}
+    {{- end }}
+{{- end }}

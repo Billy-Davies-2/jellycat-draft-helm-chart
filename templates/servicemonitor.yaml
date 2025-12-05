@@ -1,0 +1,32 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "jellycat-ui.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "jellycat-ui.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ include "jellycat-ui.chart" . }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "jellycat-ui.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    {{- if .Values.serviceMonitor.namespace }}
+    matchNames:
+      - {{ .Values.serviceMonitor.namespace }}
+    {{- else }}
+    any: true
+    {{- end }}
+  endpoints:
+    - interval: {{ .Values.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | default "10s" }}
+      port: {{ .Values.serviceMonitor.portName | default "http" }}
+      path: {{ .Values.serviceMonitor.path | default "/api/metrics" }}
+      scheme: {{ .Values.serviceMonitor.scheme | default "http" }}
+{{- end }}
