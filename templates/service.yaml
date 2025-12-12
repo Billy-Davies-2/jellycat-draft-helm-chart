@@ -20,3 +20,9 @@ spec:
       port: {{ .Values.service.port }}
       protocol: TCP
       targetPort: http
+    {{- if .Values.grpc.enabled }}
+    - name: grpc
+      port: {{ .Values.service.grpcPort }}
+      protocol: TCP
+      targetPort: grpc
+    {{- end }}

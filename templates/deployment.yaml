@@ -39,18 +39,30 @@ spec:
           ports:
             - containerPort: {{ .Values.service.port }}
               name: http
+            {{- if .Values.grpc.enabled }}
+            - containerPort: {{ .Values.grpc.port }}
+              name: grpc
+            {{- end }}
           env:
-            - name: NODE_ENV
-              value: production
             - name: PORT
               value: "{{ .Values.service.port }}"
+            {{- if .Values.grpc.enabled }}
+            - name: GRPC_PORT
+              value: "{{ .Values.grpc.port }}"
+            {{- end }}
+            {{- if .Values.environment }}
+            - name: ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            {{- end }}
             {{- if .Values.auth.enabled }}
-            - name: AUTHENTIK_URL
+            - name: AUTHENTIK_BASE_URL
               value: {{ .Values.auth.baseURL | quote }}
-            - name: AUTHENTIK_ISSUER
-              value: {{ .Values.auth.issuerURL | quote }}
             - name: AUTHENTIK_CLIENT_ID
               value: {{ .Values.auth.clientID | quote }}
+            {{- if .Values.auth.redirectURL }}
+            - name: AUTHENTIK_REDIRECT_URL
+              value: {{ .Values.auth.redirectURL | quote }}
+            {{- end }}
             {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
             - name: AUTHENTIK_CLIENT_SECRET
               valueFrom:
@@ -67,54 +79,23 @@ spec:
             - name: AUTHENTIK_CLIENT_SECRET
               value: {{ .Values.auth.clientSecret | quote }}
             {{- end }}
-            {{- end }}
-            {{- if and .Values.auth.enabled (eq .Values.auth.mode "nextauth") .Values.auth.nextAuth.enabled }}
-            - name: NEXTAUTH_URL
-              value: {{ .Values.auth.nextAuth.publicURL | quote }}
-            - name: NEXTAUTH_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ ternary .Values.auth.vault.secretName .Values.auth.existingSecret (.Values.auth.vault.enabled) }}
-                  key: {{ ternary .Values.auth.vault.keys.nextAuthSecret "NEXTAUTH_SECRET" (.Values.auth.vault.enabled) }}
-            # Auth.js v5 envs (compat with proxies)
-            - name: AUTH_URL
-              value: {{ .Values.auth.nextAuth.publicURL | quote }}
-            # Better Auth explicit URL to avoid relying on HOSTNAME/headers
-            - name: BETTER_AUTH_URL
-              value: {{ default .Values.auth.nextAuth.publicURL .Values.auth.betterAuth.url | quote }}
-            - name: AUTH_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ ternary .Values.auth.vault.secretName .Values.auth.existingSecret (.Values.auth.vault.enabled) }}
-                  key: {{ ternary .Values.auth.vault.keys.nextAuthSecret "NEXTAUTH_SECRET" (.Values.auth.vault.enabled) }}
-            # Better Auth secret (reuse NEXTAUTH_SECRET key by default)
-            - name: BETTER_AUTH_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ ternary .Values.auth.vault.secretName .Values.auth.existingSecret (.Values.auth.vault.enabled) }}
-                  key: {{ default .Values.auth.vault.keys.nextAuthSecret (default "NEXTAUTH_SECRET" .Values.auth.betterAuth.secretKey) }}
-            - name: AUTH_TRUST_HOST
-              value: "true"
-            - name: NEXTAUTH_TRUST_HOST
-              value: "true"
-            # Common app-level base URL envs
-            - name: NEXT_PUBLIC_APP_URL
-              value: {{ .Values.auth.nextAuth.publicURL | quote }}
-            - name: PUBLIC_BASE_URL
-              value: {{ .Values.auth.nextAuth.publicURL | quote }}
-            - name: APP_URL
-              value: {{ .Values.auth.nextAuth.publicURL | quote }}
-            - name: BASE_URL
-              value: {{ .Values.auth.nextAuth.publicURL | quote }}
+            {{- if .Values.auth.adminClaim }}
             - name: AUTH_ADMIN_CLAIM
               value: {{ .Values.auth.adminClaim | quote }}
+            {{- end }}
+            {{- if .Values.auth.adminValue }}
             - name: AUTH_ADMIN_VALUE
               value: {{ .Values.auth.adminValue | quote }}
+            {{- end }}
             {{- end }}
             # Database configuration
             {{- if .Values.db.driver }}
             - name: DB_DRIVER
               value: {{ .Values.db.driver | quote }}
+            {{- end }}
+            {{- if .Values.db.sqlite.file }}
+            - name: SQLITE_FILE
+              value: {{ .Values.db.sqlite.file | quote }}
             {{- end }}
             {{- if or .Values.db.postgres.value (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
             - name: DATABASE_URL
@@ -128,18 +109,18 @@ spec:
               {{- end }}
             {{- end }}
             {{- if or .Values.db.clickhouse.url (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
-            - name: CLICKHOUSE_URL
+            - name: CLICKHOUSE_ADDR
               {{- if .Values.db.clickhouse.url }}
               value: {{ .Values.db.clickhouse.url | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.db.clickhouse.urlSecretKey }}
+                  key: {{ .Values.db.clickhouse.addrSecretKey }}
               {{- end }}
             {{- end }}
             {{- if .Values.db.clickhouse.database }}
-            - name: CLICKHOUSE_DATABASE
+            - name: CLICKHOUSE_DB
               value: {{ .Values.db.clickhouse.database | quote }}
             {{- end }}
             {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
@@ -154,14 +135,6 @@ spec:
                   name: {{ .Values.auth.vault.secretName }}
                   key: {{ .Values.db.clickhouse.passwordSecretKey }}
             {{- end }}
-            {{- if .Values.db.clickhouse.pointsTable }}
-            - name: CLICKHOUSE_POINTS_TABLE
-              value: {{ .Values.db.clickhouse.pointsTable | quote }}
-            {{- end }}
-            {{- if .Values.db.clickhouse.pointsQuery }}
-            - name: CLICKHOUSE_POINTS_QUERY
-              value: {{ .Values.db.clickhouse.pointsQuery | quote }}
-            {{- end }}
             # NATS configuration
             {{- if .Values.nats.enabled }}
             {{- if or .Values.nats.url (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
@@ -175,15 +148,15 @@ spec:
                   key: {{ .Values.nats.urlSecretKey }}
               {{- end }}
             {{- end }}
-            {{- if or .Values.nats.wsUrl (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
-            - name: NATS_WS_URL
-              {{- if .Values.nats.wsUrl }}
-              value: {{ .Values.nats.wsUrl | quote }}
+            {{- if or .Values.nats.subject (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            - name: NATS_SUBJECT
+              {{- if .Values.nats.subject }}
+              value: {{ .Values.nats.subject | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.nats.wsUrlSecretKey }}
+                  key: {{ .Values.nats.subjectSecretKey }}
               {{- end }}
             {{- end }}
             {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
@@ -210,13 +183,13 @@ spec:
           {{- end }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.healthPath }}
+              path: {{ .Values.readinessPath }}
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: {{ .Values.healthPath }}
+              path: {{ .Values.livenessPath }}
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
