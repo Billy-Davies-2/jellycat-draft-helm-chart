@@ -1,0 +1,50 @@
+name: Release Charts
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Lint Chart
+        run: helm lint .
+
+      - name: Get Chart Info
+        id: chart
+        run: |
+          echo "name=$(yq e '.name' Chart.yaml)" >> $GITHUB_OUTPUT
+          echo "version=$(yq e '.version' Chart.yaml)" >> $GITHUB_OUTPUT
+
+      - name: Create charts directory structure
+        run: |
+          mkdir -p /tmp/charts
+          cp -r . /tmp/charts/${{ steps.chart.outputs.name }}
+          rm -rf /tmp/charts/${{ steps.chart.outputs.name }}/.git
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          charts_dir: /tmp/charts
+          skip_existing: true
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
