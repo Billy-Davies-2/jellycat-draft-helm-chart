@@ -1,0 +1,5 @@
+# Helm packaged charts
+*.tgz
+
+# Chart dependencies
+charts/
