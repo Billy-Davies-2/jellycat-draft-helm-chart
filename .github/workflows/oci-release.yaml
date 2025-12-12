@@ -9,7 +9,7 @@ jobs:
   release-oci:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - name: Checkout
@@ -41,3 +41,25 @@ jobs:
       - name: Push Chart to OCI Registry
         run: |
           helm push ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}
+          name: ${{ steps.chart.outputs.name }} ${{ steps.chart.outputs.version }}
+          body: |
+            ## Helm Chart Release
+
+            **Chart:** ${{ steps.chart.outputs.name }}
+            **Version:** ${{ steps.chart.outputs.version }}
+
+            ### Installation
+
+            ```bash
+            helm install ${{ steps.chart.outputs.name }} oci://ghcr.io/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }} --version ${{ steps.chart.outputs.version }}
+            ```
+          files: |
+            ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
