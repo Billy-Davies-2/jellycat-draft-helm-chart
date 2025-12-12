@@ -1,3 +1,6 @@
+{{- if and .Values.nats.enabled (not .Values.grpc.enabled) }}
+{{- fail "gRPC must be enabled when NATS is enabled. gRPC is required for real-time chat and event streaming via NATS." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

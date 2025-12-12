@@ -59,9 +59,10 @@ environment: production  # development | production
 #       name: my-secret
 extraEnv: []
 
-# gRPC server configuration
+# gRPC server configuration (required for NATS and chat interface)
+# Note: gRPC is essential for real-time messaging and event streaming via NATS
 grpc:
-  enabled: true
+  enabled: true  # Always enabled - required for NATS-based chat and events
   port: 50051
 
 resources:
@@ -131,13 +132,14 @@ db:
     userSecretKey: CLICKHOUSE_USER
     passwordSecretKey: CLICKHOUSE_PASSWORD
 
-# NATS configuration (server-side + optional browser WS URL)
+# NATS configuration (server-side messaging via gRPC)
+# Note: NATS is used for real-time chat and event streaming through the gRPC API
 nats:
   enabled: true
   # Direct values (ok for dev); in prod prefer Vault-synced Secret referenced by auth.vault.secretName
   url: ""           # e.g., nats://nats.nats.svc:4222
   subject: "draft.events" # NATS JetStream subject for draft events
-  # Keys to read from the Vault-synced Secret (ui-auth-secrets)
+  # Keys to read from the Vault-synced Secret (jellycat-ui-secrets)
   urlSecretKey: NATS_URL
   subjectSecretKey: NATS_SUBJECT
   usernameSecretKey: NATS_USERNAME

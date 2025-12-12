@@ -113,8 +113,21 @@ readinessPath: /readyz     # Kubernetes readiness probe
 ```
 
 - The Deployment exposes the container on both HTTP (`service.port`, default `3000`) and gRPC (`service.grpcPort`, default `50051`)
+- **gRPC is required** for NATS-based real-time chat and event streaming
 - Liveness probe uses `/healthz` to check if the application is running
 - Readiness probe uses `/readyz` to check if the application is ready to serve traffic (checks database connectivity)
+
+---
+
+## gRPC and NATS
+
+The application uses gRPC for real-time features:
+
+- **gRPC Server** (port 50051): Provides API endpoints and real-time event streaming
+- **NATS Integration**: gRPC's `StreamEvents()` method provides real-time updates via NATS pub/sub
+- **Chat Interface**: Chat messages use NATS for distributed messaging through gRPC
+
+**Important:** gRPC must be enabled when NATS is enabled. The chart will fail validation if you try to enable NATS without gRPC.
 
 ---
 
@@ -369,6 +382,8 @@ The Jellycat Draft UI application has been completely rewritten from Next.js/Rea
 
 **Service Changes:**
 - gRPC port 50051 now exposed alongside HTTP port 3000
+- **gRPC is required for NATS**: The chart will fail validation if NATS is enabled without gRPC
+- gRPC provides real-time event streaming and chat functionality via NATS pub/sub
 - Health probes updated: `/api/health` → `/healthz` (liveness), `/readyz` (readiness)
 
 **Resource Changes:**
