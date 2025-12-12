@@ -1,6 +1,8 @@
 # Jellycat Draft UI Helm Chart
 
-Helm chart for deploying the **Jellycat Draft UI** (Next.js) as a root-level application in your Kubernetes cluster.
+Helm chart for deploying the **Jellycat Draft UI** (Go microservice) as a root-level application in your Kubernetes cluster.
+
+> **Note:** The Jellycat Draft UI has been migrated from Next.js/React to Go. This chart has been updated to support the new Go-based architecture. See the [Migration Notes](#migration-from-nextjs-to-go) section for details.
 
 ---
 
@@ -20,6 +22,10 @@ helm install jellycat-ui jellycat-draft/jellycat-ui \
 
 - Kubernetes cluster
 - Helm 3.x
+- PostgreSQL database (or use memory/SQLite for development)
+- NATS server with JetStream (for real-time messaging)
+- Authentik OAuth2 provider (for authentication)
+- (Optional) ClickHouse (for analytics)
 - (Optional) Ingress / Gateway + HTTPRoute configured to route traffic to the `jellycat-ui` Service.
 
 ---
@@ -43,7 +49,7 @@ helm uninstall jellycat-ui -n jellycat
 
 ## Image Configuration
 
-The chart is preconfigured to use the public GHCR image for the UI:
+The chart is preconfigured to use the public GHCR image for the UI (Go-based microservice):
 
 ```yaml
 image:
@@ -97,14 +103,31 @@ Key service-related values in `values.yaml`:
 ```yaml
 service:
   type: ClusterIP
-  port: 3000
+  port: 3000      # HTTP server port
+  grpcPort: 50051 # gRPC server port
   annotations: {}
 
-healthPath: /api/health
+healthPath: /api/health    # Legacy health check
+livenessPath: /healthz     # Kubernetes liveness probe
+readinessPath: /readyz     # Kubernetes readiness probe
 ```
 
-- The Deployment exposes the container on `service.port` (default `3000`).
-- Both liveness and readiness probes use `healthPath` on the named `http` port.
+- The Deployment exposes the container on both HTTP (`service.port`, default `3000`) and gRPC (`service.grpcPort`, default `50051`)
+- **gRPC is required** for NATS-based real-time chat and event streaming
+- Liveness probe uses `/healthz` to check if the application is running
+- Readiness probe uses `/readyz` to check if the application is ready to serve traffic (checks database connectivity)
+
+---
+
+## gRPC and NATS
+
+The application uses gRPC for real-time features:
+
+- **gRPC Server** (port 50051): Provides API endpoints and real-time event streaming
+- **NATS Integration**: gRPC's `StreamEvents()` method provides real-time updates via NATS pub/sub
+- **Chat Interface**: Chat messages use NATS for distributed messaging through gRPC
+
+**Important:** gRPC must be enabled when NATS is enabled. The chart will fail validation if you try to enable NATS without gRPC.
 
 ---
 
@@ -135,9 +158,11 @@ helm upgrade --install jellycat-ui . -n jellycat \
 
 This chart exposes flexible configuration for:
 
-- **Auth** (Authentik / NextAuth / Better Auth) via `auth.*` values
-- **Database** (Postgres or ClickHouse) via `db.*`
-- **NATS** (server and optional WebSocket) via `nats.*`
+- **Auth** (Authentik OAuth2) via `auth.*` values
+- **Database** (Memory, SQLite, or PostgreSQL) via `db.*`
+- **NATS** (JetStream for real-time messaging) via `nats.*`
+- **gRPC** (API server) via `grpc.*`
+- **ClickHouse** (optional analytics) via `db.clickhouse.*`
 
 These are wired through environment variables in the `Deployment` template and can be sourced from Vault-synced Secrets (via CSI) or explicit values. See `values.yaml` for detailed examples and comments.
 
@@ -263,13 +288,49 @@ serviceMonitor:
 
 ---
 
-## Example: Minimal Auth-Disabled Deployment
+## Example: Development Deployment (In-Memory Database)
+
+For local development or testing:
 
 ```bash
 helm upgrade --install jellycat-ui . \
   -n jellycat --create-namespace \
+  --set environment=development \
+  --set db.driver=memory \
   --set auth.enabled=false \
   --set nats.enabled=false
+```
+
+This configuration:
+- Uses in-memory database (no persistence)
+- Uses mock NATS (no NATS server required)
+- Uses mock ClickHouse (no ClickHouse server required)
+- Disables authentication
+
+## Example: Production Deployment
+
+The chart includes production-ready defaults. Simply configure your secrets:
+
+```bash
+# Create a secret with your credentials
+kubectl create secret generic jellycat-ui-secrets -n jellycat \
+  --from-literal=clientSecret=your-authentik-client-secret \
+  --from-literal=DATABASE_URL=postgres://user:pass@postgres:5432/jellycat \
+  --from-literal=NATS_URL=nats://nats.nats.svc:4222 \
+  --from-literal=NATS_USERNAME=jellycat \
+  --from-literal=NATS_PASSWORD=secret \
+  --from-literal=NATS_CREDS="" \
+  --from-literal=CLICKHOUSE_ADDR=clickhouse:9000 \
+  --from-literal=CLICKHOUSE_DB=default \
+  --from-literal=CLICKHOUSE_USER=default \
+  --from-literal=CLICKHOUSE_PASSWORD=secret
+
+# Install the chart with production defaults
+helm upgrade --install jellycat-ui . \
+  -n jellycat --create-namespace \
+  --set auth.baseURL=https://auth.example.com \
+  --set auth.clientID=your-client-id \
+  --set auth.redirectURL=https://ui.example.com/auth/callback
 ```
 
 ---
@@ -287,6 +348,72 @@ View logs:
 ```bash
 kubectl -n jellycat logs deploy/jellycat-ui -f
 ```
+
+---
+
+## Migration from Next.js to Go
+
+The Jellycat Draft UI application has been completely rewritten from Next.js/React to Go. This helm chart has been updated accordingly.
+
+### Breaking Changes
+
+**Environment Variables Removed:**
+- `NODE_ENV` - No longer needed for Go application
+- `NEXTAUTH_URL`, `NEXTAUTH_SECRET` - Replaced by Authentik OAuth2
+- `AUTH_URL`, `AUTH_SECRET`, `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET` - Not used in Go
+- `AUTH_TRUST_HOST`, `NEXTAUTH_TRUST_HOST` - Not needed
+- `NEXT_PUBLIC_APP_URL`, `PUBLIC_BASE_URL`, `APP_URL`, `BASE_URL` - Frontend specific
+- `AUTHENTIK_ISSUER` - Not used in Go OAuth2 implementation
+- `NATS_WS_URL` - Go app uses server-side NATS only (no browser WebSocket)
+- `CLICKHOUSE_URL` - Split into `CLICKHOUSE_ADDR` and `CLICKHOUSE_DB`
+- `CLICKHOUSE_POINTS_TABLE`, `CLICKHOUSE_POINTS_QUERY` - Not used
+
+**Environment Variables Added:**
+- `GRPC_PORT` (default: 50051) - gRPC server port
+- `ENVIRONMENT` (default: production) - Controls use of mocks vs real services
+- `NATS_SUBJECT` (default: draft.events) - NATS JetStream subject
+- `AUTHENTIK_REDIRECT_URL` - OAuth2 redirect URL
+- `SQLITE_FILE` (default: dev.sqlite) - SQLite database file path
+
+**Environment Variables Renamed:**
+- `AUTHENTIK_URL` → `AUTHENTIK_BASE_URL`
+- `CLICKHOUSE_URL` → `CLICKHOUSE_ADDR` (address only, e.g., `localhost:9000`)
+- Added `CLICKHOUSE_DB` for database name (separate from address)
+
+**Service Changes:**
+- gRPC port 50051 now exposed alongside HTTP port 3000
+- **gRPC is required for NATS**: The chart will fail validation if NATS is enabled without gRPC
+- gRPC provides real-time event streaming and chat functionality via NATS pub/sub
+- Health probes updated: `/api/health` → `/healthz` (liveness), `/readyz` (readiness)
+
+**Resource Changes:**
+- Memory requirements reduced (Go uses ~50% less memory than Node.js)
+- Requests: 64Mi (was 128Mi)
+- Limits: 128Mi (was 256Mi)
+
+### Migration Steps
+
+If you're upgrading from the old Next.js-based chart:
+
+1. **Update your secrets** to remove NextAuth/Better Auth secrets and ensure Authentik OAuth2 credentials are present
+2. **Update environment variable names** in your values override file
+3. **Review database configuration** - the chart now defaults to `postgres` instead of no driver
+4. **Review NATS configuration** - remove `wsUrl` if you have it set
+5. **Review ClickHouse configuration** - split `url` into `addr` and `database` if using ClickHouse
+6. **Test in development** first with `environment: development` to use mocks
+7. **Deploy to production** with the new configuration
+
+### What Stayed the Same
+
+- PostgreSQL database support (still the recommended production database)
+- SQLite support for development
+- Memory driver for testing
+- Authentik OAuth2 integration (now simplified)
+- NATS JetStream for real-time messaging
+- ClickHouse for analytics (optional)
+- Ingress/HTTPRoute configuration
+- ServiceMonitor support for Prometheus
+- Vault CSI and ExternalSecrets support
 
 ---
 

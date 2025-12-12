@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  # Default image for the Jellycat Draft UI
+  # Default image for the Jellycat Draft UI (Go-based microservice)
   repository: ghcr.io/billy-davies-2/jellycat-draft-ui
   tag: latest
   pullPolicy: IfNotPresent
@@ -12,7 +12,8 @@ imagePullSecrets: [] # e.g., [{ name: ghcr-creds }]
 
 service:
   type: ClusterIP
-  port: 3000
+  port: 3000      # HTTP server port
+  grpcPort: 50051 # gRPC server port
   annotations: {}
 
 # Ingress (use OR HTTPRoute)
@@ -44,7 +45,13 @@ httpRoute:
             value: /
       filters: []
 
-healthPath: /api/health
+# Health check paths for Go application
+healthPath: /api/health    # Legacy health check endpoint
+livenessPath: /healthz     # Kubernetes liveness probe
+readinessPath: /readyz     # Kubernetes readiness probe
+
+# Environment mode (development uses mocks, production uses real services)
+environment: production  # development | production
 
 # Use envFrom sources (ConfigMap/Secret) via values like:
 # extraEnv:
@@ -52,13 +59,19 @@ healthPath: /api/health
 #       name: my-secret
 extraEnv: []
 
+# gRPC server configuration (required for NATS and chat interface)
+# Note: gRPC is essential for real-time messaging and event streaming via NATS
+grpc:
+  enabled: true  # Always enabled - required for NATS-based chat and events
+  port: 50051
+
 resources:
   requests:
     cpu: 50m
-    memory: 128Mi
+    memory: 64Mi   # Go uses less memory than Node.js
   limits:
     cpu: 200m
-    memory: 256Mi
+    memory: 128Mi  # Go uses less memory than Node.js
 
 podAnnotations: {}
 nodeSelector: {}
@@ -69,42 +82,30 @@ nameOverride: ""
 fullnameOverride: ""
 
 auth:
-  enabled: false
-  # Authentik endpoints
+  enabled: true
+  # Authentik OAuth2 endpoints (Go application uses OAuth2, not NextAuth)
   baseURL: ""   # e.g., https://auth.example.com
-  issuerURL: "" # e.g., https://auth.example.com/application/o/jellycat/
   clientID: ""
+  redirectURL: "" # e.g., https://ui.example.com/auth/callback
+  scopes: "openid,profile,email" # Comma-separated OAuth2 scopes
   # Mount a CA bundle for self-signed Authentik
   caSecretName: "" # secret with key ca.crt to trust Authentik's CA
 
   # Vault CSI (recommended)
   vault:
-    enabled: false
+    enabled: true
     secretProviderClassName: ""
-    secretName: "" # k8s Secret name synced by SPC
+    secretName: "jellycat-ui-secrets" # k8s Secret name synced by SPC
     # Optional: provide raw SecretProviderClass spec to render this chart's SPC
     # If set, the chart will create a SecretProviderClass named above.
     # Example structure depends on provider (Vault/Azure/GCP). Keep generic.
     spec: {}
     keys:
       clientSecret: clientSecret
-      nextAuthSecret: NEXTAUTH_SECRET
 
-  # NextAuth configuration
-  nextAuth:
-    enabled: false
-    publicURL: "" # External URL of your app
-    secret: ""    # NEXTAUTH_SECRET (if not using Vault sync)
-
-  # Better Auth (v2) configuration (optional)
-  # If not specified, the chart will reuse nextAuth.publicURL and nextAuth secret.
-  betterAuth:
-    url: ""
-    secretKey: ""  # override to use a different secret key name in Secret; default uses NEXTAUTH_SECRET
-
-  # Authorization via configurable claim/value (e.g., groups includes homelab-admins)
-  adminClaim: ""
-  adminValue: ""
+  # Authorization via configurable claim/value (e.g., groups includes admins)
+  adminClaim: "groups"
+  adminValue: "admins"
 
 serviceAccount:
   create: true
@@ -112,33 +113,35 @@ serviceAccount:
 
 # Database configuration
 db:
-  driver: "" # e.g., postgres | clickhouse
+  driver: "postgres" # memory | sqlite | postgres (production default)
   postgres:
     # Prefer reading from Vault-synced Secret
     secretKey: DATABASE_URL
     # Optional direct value (discouraged in prod)
     value: ""
+  sqlite:
+    # SQLite file path (default: dev.sqlite)
+    file: "dev.sqlite"
   clickhouse:
-    # Prefer a single URL in secret (e.g., http://user:pass@clickhouse:8123?database=db)
-    urlSecretKey: CLICKHOUSE_URL
+    # ClickHouse address (e.g., localhost:9000)
+    addrSecretKey: CLICKHOUSE_ADDR
     url: ""
-    # Or provide pieces:
-    database: ""
+    # Database name
+    database: "default"
+    dbSecretKey: CLICKHOUSE_DB
     userSecretKey: CLICKHOUSE_USER
     passwordSecretKey: CLICKHOUSE_PASSWORD
-    # Optional table/query overrides
-    pointsTable: ""
-    pointsQuery: ""
 
-# NATS configuration (server-side + optional browser WS URL)
+# NATS configuration (server-side messaging via gRPC)
+# Note: NATS is used for real-time chat and event streaming through the gRPC API
 nats:
-  enabled: false
+  enabled: true
   # Direct values (ok for dev); in prod prefer Vault-synced Secret referenced by auth.vault.secretName
   url: ""           # e.g., nats://nats.nats.svc:4222
-  wsUrl: ""         # e.g., wss://nats.example.com (if exposing NATS WebSocket externally)
-  # Keys to read from the Vault-synced Secret (ui-auth-secrets)
+  subject: "draft.events" # NATS JetStream subject for draft events
+  # Keys to read from the Vault-synced Secret (jellycat-ui-secrets)
   urlSecretKey: NATS_URL
-  wsUrlSecretKey: NATS_WS_URL
+  subjectSecretKey: NATS_SUBJECT
   usernameSecretKey: NATS_USERNAME
   passwordSecretKey: NATS_PASSWORD
   credsSecretKey: NATS_CREDS
@@ -185,18 +188,18 @@ serviceMonitor:
   # Map of logical keys to external provider properties
   # These default to the existing keys used in the Deployment env vars.
   data:
-    # Auth / NextAuth / Better Auth
+    # Auth / Authentik OAuth2
     clientSecretKey: clientSecret
-    nextAuthSecretKey: NEXTAUTH_SECRET
     # Database
     databaseUrlKey: DATABASE_URL
     # ClickHouse
-    clickhouseUrlKey: CLICKHOUSE_URL
+    clickhouseAddrKey: CLICKHOUSE_ADDR
+    clickhouseDbKey: CLICKHOUSE_DB
     clickhouseUserKey: CLICKHOUSE_USER
     clickhousePasswordKey: CLICKHOUSE_PASSWORD
     # NATS
     natsUrlKey: NATS_URL
-    natsWsUrlKey: NATS_WS_URL
+    natsSubjectKey: NATS_SUBJECT
     natsUsernameKey: NATS_USERNAME
     natsPasswordKey: NATS_PASSWORD
     natsCredsKey: NATS_CREDS
