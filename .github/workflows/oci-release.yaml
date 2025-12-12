@@ -1,0 +1,65 @@
+name: Release OCI Chart
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-oci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Lint Chart
+        run: helm lint .
+
+      - name: Get Chart Info
+        id: chart
+        run: |
+          echo "name=$(yq e '.name' Chart.yaml)" >> $GITHUB_OUTPUT
+          echo "version=$(yq e '.version' Chart.yaml)" >> $GITHUB_OUTPUT
+
+      - name: Login to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package Chart
+        run: helm package .
+
+      - name: Push Chart to OCI Registry
+        run: |
+          helm push ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}
+          name: ${{ steps.chart.outputs.name }} ${{ steps.chart.outputs.version }}
+          body: |
+            ## Helm Chart Release
+
+            **Chart:** ${{ steps.chart.outputs.name }}
+            **Version:** ${{ steps.chart.outputs.version }}
+
+            ### Installation
+
+            ```bash
+            helm install ${{ steps.chart.outputs.name }} oci://ghcr.io/${{ github.repository_owner }}/charts/${{ steps.chart.outputs.name }} --version ${{ steps.chart.outputs.version }}
+            ```
+          files: |
+            ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

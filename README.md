@@ -8,9 +8,18 @@ Helm chart for deploying the **Jellycat Draft UI** (Go microservice) as a root-l
 
 ## TL;DR
 
+### Using Traditional Helm Repository
+
 ```bash
 helm repo add jellycat-draft https://billy-davies-2.github.io/jellycat-draft-helm-chart
 helm install jellycat-ui jellycat-draft/jellycat-ui \
+  --namespace jellycat --create-namespace
+```
+
+### Using OCI Registry (Recommended)
+
+```bash
+helm install jellycat-ui oci://ghcr.io/billy-davies-2/charts/jellycat-ui \
   --namespace jellycat --create-namespace
 ```
 
