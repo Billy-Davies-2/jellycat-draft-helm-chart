@@ -44,7 +44,7 @@ jobs:
           helm push ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz oci://ghcr.io/${{ steps.chart.outputs.owner }}/charts
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}
           name: ${{ steps.chart.outputs.name }} ${{ steps.chart.outputs.version }}
