@@ -10,6 +10,12 @@ image:
 
 imagePullSecrets: [] # e.g., [{ name: ghcr-creds }]
 
+app:
+  # Public URL shown on the TV join panel. Leave empty to derive from the incoming request.
+  publicURL: ""
+  # Optional fixed room code. Leave empty to generate a fresh 4-character code on startup.
+  roomCode: ""
+
 service:
   type: ClusterIP
   port: 3000      # HTTP server port
@@ -50,8 +56,9 @@ healthPath: /api/health    # Legacy health check endpoint
 livenessPath: /healthz     # Kubernetes liveness probe
 readinessPath: /readyz     # Kubernetes readiness probe
 
-# Environment mode (development uses mocks, production uses real services)
-environment: production  # development | production
+# Environment mode. Development is credential-free and uses mock auth plus memory storage.
+# Production requires Authentik credentials and should normally use PostgreSQL.
+environment: development  # development | production
 
 # Use envFrom sources (ConfigMap/Secret) via values like:
 # extraEnv:
@@ -82,10 +89,14 @@ nameOverride: ""
 fullnameOverride: ""
 
 auth:
-  enabled: true
+  enabled: false
   # Authentik OAuth2 endpoints (Go application uses OAuth2, not NextAuth)
   baseURL: ""   # e.g., https://auth.example.com
   clientID: ""
+  clientIDKey: clientID
+  clientSecret: ""
+  clientSecretKey: clientSecret
+  existingSecret: ""
   redirectURL: "" # e.g., https://ui.example.com/auth/callback
   scopes: "openid,profile,email" # Comma-separated OAuth2 scopes
   # Mount a CA bundle for self-signed Authentik
@@ -93,9 +104,9 @@ auth:
 
   # Vault CSI (recommended)
   vault:
-    enabled: true
+    enabled: false
     secretProviderClassName: ""
-    secretName: "jellycat-ui-secrets" # k8s Secret name synced by SPC
+    secretName: "" # k8s Secret name synced by SPC or an external secret
     # Optional: provide raw SecretProviderClass spec to render this chart's SPC
     # If set, the chart will create a SecretProviderClass named above.
     # Example structure depends on provider (Vault/Azure/GCP). Keep generic.
@@ -113,7 +124,7 @@ serviceAccount:
 
 # Database configuration
 db:
-  driver: "postgres" # memory | sqlite | postgres (production default)
+  driver: "memory" # memory | sqlite | postgres
   postgres:
     # Prefer reading from Vault-synced Secret
     secretKey: DATABASE_URL
@@ -123,6 +134,7 @@ db:
     # SQLite file path (default: dev.sqlite)
     file: "dev.sqlite"
   clickhouse:
+    enabled: false
     # ClickHouse address (e.g., localhost:9000)
     addrSecretKey: CLICKHOUSE_ADDR
     url: ""
@@ -135,7 +147,8 @@ db:
 # NATS configuration (server-side messaging via gRPC)
 # Note: NATS is used for real-time chat and event streaming through the gRPC API
 nats:
-  enabled: true
+  enabled: false
+  authFromSecret: false
   # Direct values (ok for dev); in prod prefer Vault-synced Secret referenced by auth.vault.secretName
   url: ""           # e.g., nats://nats.nats.svc:4222
   subject: "draft.events" # NATS JetStream subject for draft events
@@ -158,37 +171,22 @@ networkPolicy:
 # ExternalSecrets integration (external-secrets.io)
 externalSecrets:
   enabled: false
-
-# ServiceMonitor (Prometheus Operator) optional
-serviceMonitor:
-  enabled: false
-  labels: {}
-  interval: 30s
-  scrapeTimeout: 10s
-  namespace: ""
-  # Metrics endpoint details
-  portName: http
-  path: /api/metrics
-  scheme: http
-  # Name of the ExternalSecret resource; defaults to release fullname when empty
+  # Name of the ExternalSecret resource; defaults to the release fullname when empty.
   name: ""
-  # Name of the Secret to be created by ExternalSecrets; defaults to auth.vault.secretName when empty
+  # Name of the Secret to be created; defaults to auth.existingSecret, auth.vault.secretName, or <release>-jellycat-ui-secrets.
   secretName: ""
-  # Reference to the ClusterSecretStore/SecretStore
+  # Reference to the ClusterSecretStore/SecretStore.
   secretStoreRef:
     name: ""          # required when externalSecrets.enabled=true
     kind: ClusterSecretStore
-  # Refresh interval for pulling secrets
   refreshInterval: 1h
-  # Where in the provider the secrets live (e.g. Vault path, AWS SecretsManager key)
   remoteRef:
-    # Base path/prefix; individual keys are appended to this
+    # Base path/prefix; individual properties are read from this provider key.
     # Example for Vault: "secret/data/jellycat/ui"
     basePath: ""
-  # Map of logical keys to external provider properties
-  # These default to the existing keys used in the Deployment env vars.
   data:
     # Auth / Authentik OAuth2
+    clientIDKey: clientID
     clientSecretKey: clientSecret
     # Database
     databaseUrlKey: DATABASE_URL
@@ -203,3 +201,15 @@ serviceMonitor:
     natsUsernameKey: NATS_USERNAME
     natsPasswordKey: NATS_PASSWORD
     natsCredsKey: NATS_CREDS
+
+# ServiceMonitor (Prometheus Operator) optional
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+  namespace: ""
+  # Metrics endpoint details
+  portName: http
+  path: /api/metrics
+  scheme: http

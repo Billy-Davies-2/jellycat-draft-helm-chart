@@ -1,6 +1,17 @@
 {{- if and .Values.nats.enabled (not .Values.grpc.enabled) }}
 {{- fail "gRPC must be enabled when NATS is enabled. gRPC is required for real-time chat and event streaming via NATS." }}
 {{- end }}
+{{- $secretBackedConfig := or .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName) -}}
+{{- if and (eq .Values.environment "production") (not .Values.auth.enabled) }}
+{{- fail "auth.enabled must be true when environment=production because the app requires Authentik credentials in production." }}
+{{- end }}
+{{- if and (eq .Values.environment "production") .Values.auth.enabled (not (or .Values.auth.clientID $secretBackedConfig)) }}
+{{- fail "production auth requires auth.clientID or a secret-backed client ID." }}
+{{- end }}
+{{- if and (eq .Values.environment "production") .Values.auth.enabled (not (or .Values.auth.clientSecret $secretBackedConfig)) }}
+{{- fail "production auth requires auth.clientSecret, auth.existingSecret, externalSecrets.enabled, or auth.vault with a synced secret." }}
+{{- end }}
+{{- $secretName := include "jellycat-ui.secretName" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,11 +68,27 @@ spec:
             - name: ENVIRONMENT
               value: {{ .Values.environment | quote }}
             {{- end }}
+            {{- if .Values.app.publicURL }}
+            - name: PUBLIC_URL
+              value: {{ .Values.app.publicURL | quote }}
+            {{- end }}
+            {{- if .Values.app.roomCode }}
+            - name: ROOM_CODE
+              value: {{ .Values.app.roomCode | quote }}
+            {{- end }}
             {{- if .Values.auth.enabled }}
             - name: AUTHENTIK_BASE_URL
               value: {{ .Values.auth.baseURL | quote }}
+            {{- if .Values.auth.clientID }}
             - name: AUTHENTIK_CLIENT_ID
               value: {{ .Values.auth.clientID | quote }}
+            {{- else if $secretBackedConfig }}
+            - name: AUTHENTIK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.clientIDKey | default .Values.auth.clientIDKey | default "clientID" }}{{ else }}{{ .Values.auth.clientIDKey | default "clientID" }}{{ end }}
+            {{- end }}
             {{- if .Values.auth.redirectURL }}
             - name: AUTHENTIK_REDIRECT_URL
               value: {{ .Values.auth.redirectURL | quote }}
@@ -70,14 +97,20 @@ spec:
             - name: AUTHENTIK_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.auth.vault.keys.clientSecret }}
+                  name: {{ $secretName }}
+                  key: {{ .Values.auth.vault.keys.clientSecret | default .Values.auth.clientSecretKey | default "clientSecret" }}
             {{- else if .Values.auth.existingSecret }}
             - name: AUTHENTIK_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.existingSecret }}
-                  key: clientSecret
+                  name: {{ $secretName }}
+                  key: {{ .Values.auth.clientSecretKey | default "clientSecret" }}
+            {{- else if .Values.externalSecrets.enabled }}
+            - name: AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ .Values.externalSecrets.data.clientSecretKey | default "clientSecret" }}
             {{- else if .Values.auth.clientSecret }}
             - name: AUTHENTIK_CLIENT_SECRET
               value: {{ .Values.auth.clientSecret | quote }}
@@ -100,84 +133,86 @@ spec:
             - name: SQLITE_FILE
               value: {{ .Values.db.sqlite.file | quote }}
             {{- end }}
-            {{- if or .Values.db.postgres.value (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            {{- if or .Values.db.postgres.value .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
             - name: DATABASE_URL
               {{- if .Values.db.postgres.value }}
               value: {{ .Values.db.postgres.value | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.db.postgres.secretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.databaseUrlKey | default "DATABASE_URL" }}{{ else }}{{ .Values.db.postgres.secretKey }}{{ end }}
               {{- end }}
             {{- end }}
-            {{- if or .Values.db.clickhouse.url (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            - name: CLICKHOUSE_ENABLED
+              value: {{ .Values.db.clickhouse.enabled | quote }}
+            {{- if and .Values.db.clickhouse.enabled (or .Values.db.clickhouse.url .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName)) }}
             - name: CLICKHOUSE_ADDR
               {{- if .Values.db.clickhouse.url }}
               value: {{ .Values.db.clickhouse.url | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.db.clickhouse.addrSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.clickhouseAddrKey | default "CLICKHOUSE_ADDR" }}{{ else }}{{ .Values.db.clickhouse.addrSecretKey }}{{ end }}
               {{- end }}
             {{- end }}
             {{- if .Values.db.clickhouse.database }}
             - name: CLICKHOUSE_DB
               value: {{ .Values.db.clickhouse.database | quote }}
             {{- end }}
-            {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
+            {{- if and .Values.db.clickhouse.enabled (or .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName)) }}
             - name: CLICKHOUSE_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.db.clickhouse.userSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.clickhouseUserKey | default "CLICKHOUSE_USER" }}{{ else }}{{ .Values.db.clickhouse.userSecretKey }}{{ end }}
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.db.clickhouse.passwordSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.clickhousePasswordKey | default "CLICKHOUSE_PASSWORD" }}{{ else }}{{ .Values.db.clickhouse.passwordSecretKey }}{{ end }}
             {{- end }}
             # NATS configuration
             {{- if .Values.nats.enabled }}
-            {{- if or .Values.nats.url (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            {{- if or .Values.nats.url .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
             - name: NATS_URL
               {{- if .Values.nats.url }}
               value: {{ .Values.nats.url | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.nats.urlSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.natsUrlKey | default "NATS_URL" }}{{ else }}{{ .Values.nats.urlSecretKey }}{{ end }}
               {{- end }}
             {{- end }}
-            {{- if or .Values.nats.subject (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
+            {{- if or .Values.nats.subject .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName) }}
             - name: NATS_SUBJECT
               {{- if .Values.nats.subject }}
               value: {{ .Values.nats.subject | quote }}
               {{- else }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.nats.subjectSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.natsSubjectKey | default "NATS_SUBJECT" }}{{ else }}{{ .Values.nats.subjectSecretKey }}{{ end }}
               {{- end }}
             {{- end }}
-            {{- if and .Values.auth.vault.enabled .Values.auth.vault.secretName }}
+            {{- if and .Values.nats.authFromSecret (or .Values.auth.existingSecret .Values.externalSecrets.enabled (and .Values.auth.vault.enabled .Values.auth.vault.secretName)) }}
             - name: NATS_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.nats.usernameSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.natsUsernameKey | default "NATS_USERNAME" }}{{ else }}{{ .Values.nats.usernameSecretKey }}{{ end }}
             - name: NATS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.nats.passwordSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.natsPasswordKey | default "NATS_PASSWORD" }}{{ else }}{{ .Values.nats.passwordSecretKey }}{{ end }}
             - name: NATS_CREDS
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.vault.secretName }}
-                  key: {{ .Values.nats.credsSecretKey }}
+                  name: {{ $secretName }}
+                  key: {{ if .Values.externalSecrets.enabled }}{{ .Values.externalSecrets.data.natsCredsKey | default "NATS_CREDS" }}{{ else }}{{ .Values.nats.credsSecretKey }}{{ end }}
             {{- end }}
             {{- end }}
           {{- with .Values.extraEnv }}

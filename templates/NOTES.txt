@@ -1,11 +1,25 @@
 Thanks for installing {{ .Chart.Name }}.
 
-This release exposes a Service named "ui" on port {{ .Values.service.port }}.
+This release exposes a Service named "{{ include "jellycat-ui.fullname" . }}" on port {{ .Values.service.port }}.
+
+Runtime:
+- Environment: {{ .Values.environment }}
+- Storage driver: {{ .Values.db.driver }}
+{{- if .Values.app.publicURL }}
+- Public URL: {{ .Values.app.publicURL }}
+{{- end }}
 
 Routing:
-- An HTTPRoute should already point your hostname to this service.
 - Namespace: {{ .Release.Namespace }}
-- Service: ui:{{ .Values.service.port }}
+- Service: {{ include "jellycat-ui.fullname" . }}:{{ .Values.service.port }}
+{{- if .Values.httpRoute.enabled }}
+- HTTPRoute enabled
+{{- else if .Values.ingress.enabled }}
+- Ingress enabled
+{{- else }}
+- No ingress or HTTPRoute is enabled. Use port-forwarding for local access:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "jellycat-ui.fullname" . }} 3000:{{ .Values.service.port }}
+{{- end }}
 
 Verify rollout:
   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "jellycat-ui.fullname" . }}

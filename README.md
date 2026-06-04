@@ -31,9 +31,9 @@ helm install jellycat-ui oci://ghcr.io/billy-davies-2/charts/jellycat-ui \
 
 - Kubernetes cluster
 - Helm 3.x
-- PostgreSQL database (or use memory/SQLite for development)
-- NATS server with JetStream (for real-time messaging)
-- Authentik OAuth2 provider (for authentication)
+- PostgreSQL database for production (memory/SQLite work for development)
+- NATS server with JetStream for production real-time messaging
+- Authentik OAuth2 provider for production authentication
 - (Optional) ClickHouse (for analytics)
 - (Optional) Ingress / Gateway + HTTPRoute configured to route traffic to the `jellycat-ui` Service.
 
@@ -78,7 +78,7 @@ Example overrides:
 # Deploy a specific version
 helm upgrade --install jellycat-ui . \
   -n jellycat \
-  --set image.tag=v0.2.0
+  --set image.tag=v0.3.0
 
 # One-off deployment using tagOverride (keeps values.yaml at latest)
 helm upgrade --install jellycat-ui . \
@@ -148,10 +148,10 @@ replicaCount: 1
 resources:
   requests:
     cpu: 50m
-    memory: 128Mi
+    memory: 64Mi
   limits:
     cpu: 200m
-    memory: 256Mi
+    memory: 128Mi
 ```
 
 Scale the app:
@@ -175,6 +175,8 @@ This chart exposes flexible configuration for:
 
 These are wired through environment variables in the `Deployment` template and can be sourced from Vault-synced Secrets (via CSI) or explicit values. See `values.yaml` for detailed examples and comments.
 
+The default values are intentionally easy to install: `environment=development`, `db.driver=memory`, `auth.enabled=false`, and `nats.enabled=false`. For production, set `environment=production`, enable auth, and provide Authentik credentials.
+
 ### Secrets: choose ExternalSecrets OR SecretProviderClass
 
 You can wire secrets using one of two patterns. Do not enable both at the same time — the chart will fail the render if it detects both are enabled.
@@ -182,7 +184,7 @@ You can wire secrets using one of two patterns. Do not enable both at the same t
 - ExternalSecrets (external-secrets.io):
   - Enable `externalSecrets.enabled=true`
   - Point `externalSecrets.secretStoreRef` and `externalSecrets.remoteRef.basePath`
-  - Optionally set `externalSecrets.secretName` (defaults to `auth.vault.secretName` or `<release>-jellycat-ui-auth`).
+  - Optionally set `externalSecrets.secretName` (defaults to `auth.existingSecret`, `auth.vault.secretName`, or `<release>-jellycat-ui-secrets`).
   - The `Deployment` reads envs from this Secret using the configured keys.
 
 - SecretProviderClass (CSI driver):
@@ -221,17 +223,12 @@ auth:
           - objectName: clientSecret
             secretPath: secret/data/jellycat/ui
             secretKey: clientSecret
-          - objectName: NEXTAUTH_SECRET
-            secretPath: secret/data/jellycat/ui
-            secretKey: NEXTAUTH_SECRET
       secretObjects:
         - secretName: ui-auth-secrets
           type: Opaque
           data:
             - key: clientSecret
               objectName: clientSecret
-            - key: NEXTAUTH_SECRET
-              objectName: NEXTAUTH_SECRET
 ```
 
 ### Routing: Ingress or HTTPRoute
@@ -312,13 +309,13 @@ helm upgrade --install jellycat-ui . \
 
 This configuration:
 - Uses in-memory database (no persistence)
-- Uses mock NATS (no NATS server required)
-- Uses mock ClickHouse (no ClickHouse server required)
+- Uses the app's embedded development NATS (no external NATS server required)
+- Leaves ClickHouse disabled
 - Disables authentication
 
 ## Example: Production Deployment
 
-The chart includes production-ready defaults. Simply configure your secrets:
+Production requires Authentik credentials and should normally use PostgreSQL plus external NATS:
 
 ```bash
 # Create a secret with your credentials
@@ -337,9 +334,15 @@ kubectl create secret generic jellycat-ui-secrets -n jellycat \
 # Install the chart with production defaults
 helm upgrade --install jellycat-ui . \
   -n jellycat --create-namespace \
+  --set environment=production \
+  --set app.publicURL=https://ui.example.com \
+  --set auth.enabled=true \
+  --set auth.existingSecret=jellycat-ui-secrets \
   --set auth.baseURL=https://auth.example.com \
   --set auth.clientID=your-client-id \
-  --set auth.redirectURL=https://ui.example.com/auth/callback
+  --set auth.redirectURL=https://ui.example.com/auth/callback \
+  --set db.driver=postgres \
+  --set nats.enabled=true
 ```
 
 ---
@@ -379,7 +382,9 @@ The Jellycat Draft UI application has been completely rewritten from Next.js/Rea
 
 **Environment Variables Added:**
 - `GRPC_PORT` (default: 50051) - gRPC server port
-- `ENVIRONMENT` (default: production) - Controls use of mocks vs real services
+- `ENVIRONMENT` (chart default: development) - Controls use of mocks vs real services
+- `PUBLIC_URL` - Optional public URL shown on the TV join panel
+- `ROOM_CODE` - Optional fixed room code; leave unset for generated room codes
 - `NATS_SUBJECT` (default: draft.events) - NATS JetStream subject
 - `AUTHENTIK_REDIRECT_URL` - OAuth2 redirect URL
 - `SQLITE_FILE` (default: dev.sqlite) - SQLite database file path
@@ -406,7 +411,7 @@ If you're upgrading from the old Next.js-based chart:
 
 1. **Update your secrets** to remove NextAuth/Better Auth secrets and ensure Authentik OAuth2 credentials are present
 2. **Update environment variable names** in your values override file
-3. **Review database configuration** - the chart now defaults to `postgres` instead of no driver
+3. **Review database configuration** - the chart now defaults to `memory` for easy installs; set `db.driver=postgres` for production
 4. **Review NATS configuration** - remove `wsUrl` if you have it set
 5. **Review ClickHouse configuration** - split `url` into `addr` and `database` if using ClickHouse
 6. **Test in development** first with `environment: development` to use mocks
