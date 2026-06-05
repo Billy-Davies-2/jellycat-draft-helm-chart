@@ -15,6 +15,9 @@ app:
   publicURL: ""
   # Optional fixed room code. Leave empty to generate a fresh 4-character code on startup.
   roomCode: ""
+  # Optional demo switch: seed the canned Jellycat catalog into an empty non-dev database.
+  # Keep false for normal production; set true only for a controlled demo environment.
+  seedDefaultCatalog: false
 
 service:
   type: ClusterIP
